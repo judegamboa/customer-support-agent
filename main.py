@@ -6,7 +6,7 @@ Claude responds with a stop_reason other than "tool_use".
 
 from agent import run_agent
 
-QUESTION = "What's the refund policy for international orders?"
+QUESTION = "Update my shipping address, refund $60 for order 1042, and tell me when my next delivery arrives."
 
 
 def main() -> None:

@@ -14,6 +14,7 @@ from tools import TOOL_FUNCTIONS, TOOLS
 logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 50
+REFUND_LIMIT = 50
 
 AGENT_SYSTEM_PROMPT = (
     "You are a customer-support agent. You can only look up orders, look up customers, and issue "
@@ -21,8 +22,24 @@ AGENT_SYSTEM_PROMPT = (
     "knowledge should be used to answer support questions. If a request needs information or a "
     "decision outside what your tools can provide (e.g. policy questions, ambiguous or out-of-range "
     "requests, or a customer who needs human judgment), call escalate instead of guessing or "
-    "answering from general knowledge."
+    "answering from general knowledge.\n\n"
+    "Business rule: never issue a refund above $50. If a refund request would exceed this "
+    "amount, do not call issue_refund -- call escalate instead."
 )
+
+
+def pre_tool_use(name: str, tool_input: dict) -> str | None:
+    """Enforce business rules before a tool's function is actually called.
+
+    Deterministic value comparison only -- never delegates the decision to a model.
+    Returns an error message if the call should be blocked, or None if it's allowed.
+    """
+    if name == "issue_refund" and tool_input.get("amount", 0) > REFUND_LIMIT:
+        return (
+            f"Blocked: refund amount {tool_input.get('amount')} exceeds the maximum allowed "
+            f"refund of ${REFUND_LIMIT}. Do not retry this amount -- call escalate instead."
+        )
+    return None
 
 
 def run_agent(question: str) -> str:
@@ -61,6 +78,23 @@ def run_agent(question: str) -> str:
         for block in response.content:
             if block.type != "tool_use":
                 continue
+
+            block_error = pre_tool_use(block.name, block.input)
+            if block_error is not None:
+                print(
+                    f"Blocked tool call: name={block.name} input={block.input} "
+                    f"reason={block_error}"
+                )
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": block_error,
+                        "is_error": True,
+                    }
+                )
+                continue
+
             if block.name == "escalate":
                 summary = block.input
                 print(f"Handing off to receiver agent: reason={summary['reason']!r}")
